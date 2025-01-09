@@ -9,8 +9,8 @@ app = Flask(__name__)
 app.secret_key = os.urandom(24)
 
 # File initialization logic
-USERS_FILE = "users.csv"
-EXPENSES_FILE = "expenses.xlsx"
+USERS_FILE = "https://github.com/Mathan3006/webapp/blob/main/users.csv"
+EXPENSES_FILE = "https://github.com/Mathan3006/webapp/blob/main/expenses.xlsx"
 
 def initialize_files():
     if not os.path.exists(USERS_FILE):
