@@ -108,15 +108,52 @@ def login_user():
         username = request.form['username'].strip()
         password = request.form['password'].strip()
 
-        users_data = fetch_table_data(USERS_BASE_URL, USERS_TOKEN)
-        user = next((u for u in users_data['rows'] if u['Username'] == username), None)
+        try:
+            # Fetch the UUID of the dtable using the base list API
+            dtable_response = requests.get(
+                "https://cloud.seatable.io/api/v2.1/dtables/",
+                headers={"Authorization": f"Token {SEATABLE_USERS_TOKEN}"}
+            )
+            if dtable_response.status_code != 200:
+                flash("Error fetching dtable UUID.", "error")
+                return redirect(url_for('login_user'))
 
-        if not user or not check_password_hash(user['Password'], password):
-            flash("Invalid username or password!", "error")
+            dtables = dtable_response.json().get("dtables", [])
+            users_table = next(
+                (dtable for dtable in dtables if dtable['name'] == "users.csv"), None
+            )
+            if not users_table:
+                flash("Users table not found.", "error")
+                return redirect(url_for('login_user'))
+
+            # Use the UUID to fetch rows
+            users_response = requests.get(
+                f"https://cloud.seatable.io/api/v2.1/dtable/{users_table['uuid']}/rows/",
+                headers={"Authorization": f"Token {SEATABLE_USERS_TOKEN}"},
+                params={"table_name": "users"}
+            )
+            if users_response.status_code != 200:
+                flash("Error fetching users data.", "error")
+                return redirect(url_for('login_user'))
+
+            users = pd.DataFrame(users_response.json().get("rows", []))
+
+            # Verify username and password
+            if not users.empty and username in users["Username"].values:
+                user = users[users["Username"] == username].iloc[0]
+                if check_password_hash(user["Password"], password):
+                    session['user'] = username
+                    flash("Logged in successfully!", "success")
+                    return redirect(url_for('dashboard'))
+                else:
+                    flash("Invalid password.", "error")
+            else:
+                flash("Username not found.", "error")
+
+        except Exception as e:
+            print(f"Error in login: {e}")
+            flash("An unexpected error occurred.", "error")
             return redirect(url_for('login_user'))
-
-        flash(f"Welcome, {username}!", "success")
-        return redirect(url_for('dashboard', username=username))
 
     return render_template('login.html')
 
