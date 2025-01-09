@@ -1,34 +1,34 @@
 from flask import Flask, render_template, request, redirect, url_for, flash, g
+import requests
 import os
-import pandas as pd
 from datetime import datetime
 from werkzeug.security import generate_password_hash, check_password_hash
-from dotenv import load_dotenv  # Import dotenv to load environment variables
-import requests  # Used to make API requests
-
-# Load environment variables from the .env file
-load_dotenv()
-
-# Get the API access tokens from the environment
-USERS_API_ACCESS_TOKEN = os.getenv("USERS_API_ACCESS_TOKEN")
-EXPENSES_API_ACCESS_TOKEN = os.getenv("EXPENSES_API_ACCESS_TOKEN")
 
 # Initialize Flask app
 app = Flask(__name__)
 app.secret_key = os.urandom(24)
 
-# File initialization logic
-USERS_FILE = "https://github.com/Mathan3006/webapp/blob/main/users.csv"
-EXPENSES_FILE = "https://github.com/Mathan3006/webapp/blob/main/expenses.xlsx"
+# SeaTable API tokens and base URLs
+USERS_BASE_URL = "https://cloud.seatable.io/dtable/links/d4f3fdbdd6f043f389e0/api/v2.1"
+USERS_TOKEN = "536656d47e2ceb91b121b0fc89fa3584b1e4a86a"
 
-def initialize_files():
-    if not os.path.exists(USERS_FILE):
-        pd.DataFrame(columns=["Username", "Password"]).to_csv(USERS_FILE, index=False)
+EXPENSES_BASE_URL = "https://cloud.seatable.io/dtable/links/e9795ec13a0f4b14a115/api/v2.1"
+EXPENSES_TOKEN = "7577fdf485d2685c0aeeafa5ae6ab5da429288d5"
 
-    if not os.path.exists(EXPENSES_FILE):
-        pd.DataFrame(columns=["Date", "Username", "Expense", "Reason", "Income"]).to_excel(EXPENSES_FILE, index=False, engine="openpyxl")
+# Helper functions for interacting with SeaTable API
+def fetch_table_data(base_url, token):
+    headers = {"Authorization": f"Token {token}"}
+    response = requests.get(f"{base_url}/rows/", headers=headers)
+    response.raise_for_status()
+    return response.json()
 
-initialize_files()
+def update_table_data(base_url, token, data):
+    headers = {
+        "Authorization": f"Token {token}",
+        "Content-Type": "application/json"
+    }
+    response = requests.post(f"{base_url}/batch-append-rows/", headers=headers, json=data)
+    response.raise_for_status()
 
 # Add before_request function here
 @app.before_request
@@ -52,16 +52,19 @@ def register_user():
             flash("Passwords do not match!", "error")
             return redirect(url_for('register_user'))
 
-        users = pd.read_csv(USERS_FILE)
-        if username in users["Username"].values:
+        users_data = fetch_table_data(USERS_BASE_URL, USERS_TOKEN)
+
+        if any(user['Username'] == username for user in users_data['rows']):
             flash("Username already exists!", "error")
             return redirect(url_for('register_user'))
 
         # Hash the password before storing
         hashed_password = generate_password_hash(password)
 
-        new_user = pd.DataFrame({"Username": [username], "Password": [hashed_password]})
-        new_user.to_csv(USERS_FILE, mode='a', header=False, index=False)
+        # Add new user to SeaTable
+        new_user = {"Username": username, "Password": hashed_password}
+        update_table_data(USERS_BASE_URL, USERS_TOKEN, {"rows": [new_user]})
+
         flash("User registered successfully!", "success")
         return redirect(url_for('login_user'))
 
@@ -73,15 +76,10 @@ def login_user():
         username = request.form['username'].strip()
         password = request.form['password'].strip()
 
-        users = pd.read_csv(USERS_FILE)
-        user = users[users["Username"] == username]
+        users_data = fetch_table_data(USERS_BASE_URL, USERS_TOKEN)
+        user = next((u for u in users_data['rows'] if u['Username'] == username), None)
 
-        if user.empty:
-            flash("Invalid username or password!", "error")
-            return redirect(url_for('login_user'))
-
-        # Verify the hashed password
-        if not check_password_hash(str(user["Password"].iloc[0]), password):
+        if not user or not check_password_hash(user['Password'], password):
             flash("Invalid username or password!", "error")
             return redirect(url_for('login_user'))
 
@@ -101,21 +99,15 @@ def dashboard(username):
             # Get the current date and time
             date = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-            # Read the existing expenses
-            expenses = pd.read_excel(EXPENSES_FILE)
-
-            # Add the new expense to the DataFrame
-            new_entry = pd.DataFrame({
-                "Date": [date],
-                "Username": [username],
-                "Expense": [expense],
-                "Reason": [reason],
-                "Income": [income]
-            })
-            expenses = pd.concat([expenses, new_entry], ignore_index=True)
-
-            # Save the updated DataFrame to the file
-            expenses.to_excel(EXPENSES_FILE, index=False, engine="openpyxl")
+            # Add new expense to SeaTable
+            new_entry = {
+                "Date": date,
+                "Username": username,
+                "Expense": expense,
+                "Reason": reason,
+                "Income": income
+            }
+            update_table_data(EXPENSES_BASE_URL, EXPENSES_TOKEN, {"rows": [new_entry]})
 
             flash("Expense recorded successfully!", "success")
         except ValueError:
@@ -124,64 +116,20 @@ def dashboard(username):
             flash(f"An error occurred: {e}", "error")
 
     # Fetch expenses for the current user
-    expenses = pd.read_excel(EXPENSES_FILE)
-    user_expenses = expenses[expenses["Username"] == username]
+    expenses_data = fetch_table_data(EXPENSES_BASE_URL, EXPENSES_TOKEN)
+    user_expenses = [e for e in expenses_data['rows'] if e['Username'] == username]
     return render_template('dashboard.html', username=username, expenses=user_expenses)
 
 @app.route('/view_expenses/<username>')
 def view_expenses(username):
-    expenses = pd.read_excel(EXPENSES_FILE)
-    user_expenses = expenses[expenses["Username"] == username]
+    expenses_data = fetch_table_data(EXPENSES_BASE_URL, EXPENSES_TOKEN)
+    user_expenses = [e for e in expenses_data['rows'] if e['Username'] == username]
     return render_template('view_expenses.html', expenses=user_expenses)
-
-@app.route('/delete_expense/<int:expense_id>', methods=["POST"])
-def delete_expense(expense_id):
-    try:
-        # Read the expenses file
-        expenses = pd.read_excel(EXPENSES_FILE)
-
-        # Check if the ID is valid
-        if 0 <= expense_id < len(expenses):
-            # Drop the expense by index
-            expenses = expenses.drop(expense_id).reset_index(drop=True)
-            # Save the updated expenses back to the file
-            expenses.to_excel(EXPENSES_FILE, index=False, engine="openpyxl")
-            flash("Expense deleted successfully!", "success")
-        else:
-            flash("Invalid expense ID!", "error")
-    except Exception as e:
-        flash(f"Error deleting expense: {e}", "error")
-
-    # Redirect back to the dashboard
-    return redirect(request.referrer or url_for('dashboard', username=g.current_user))
 
 @app.route('/logout')
 def logout():
     flash("You have logged out.", "info")
     return redirect(url_for('login_user'))
-
-# API request example with different access tokens
-def make_api_request(url, token):
-    headers = {
-        "Authorization": f"Bearer {token}"
-    }
-    response = requests.get(url, headers=headers)
-    if response.status_code == 200:
-        return response.json()  # Return the JSON data
-    else:
-        return f"Error: {response.status_code}"
-
-@app.route('/fetch_users_data')
-def fetch_users_data():
-    url = "https://api.example.com/users"  # Replace with your actual URL for users
-    data = make_api_request(url, USERS_API_ACCESS_TOKEN)
-    return f"Users API Data: {data}"
-
-@app.route('/fetch_expenses_data')
-def fetch_expenses_data():
-    url = "https://api.example.com/expenses"  # Replace with your actual URL for expenses
-    data = make_api_request(url, EXPENSES_API_ACCESS_TOKEN)
-    return f"Expenses API Data: {data}"
 
 # Run the app
 if __name__ == '__main__':
