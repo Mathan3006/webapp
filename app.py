@@ -40,7 +40,6 @@ def before_request():
 @app.route('/')
 def home():
     return render_template("home.html")
-
 @app.route('/register', methods=["GET", "POST"])
 def register_user():
     if request.method == "POST":
@@ -48,28 +47,61 @@ def register_user():
         password = request.form['password'].strip()
         confirm_password = request.form['confirm_password'].strip()
 
-        if password != confirm_password:
-            flash("Passwords do not match!", "error")
+        try:
+            if password != confirm_password:
+                flash("Passwords do not match!", "error")
+                return redirect(url_for('register_user'))
+
+            # Fetch existing users
+            users_response = requests.get(
+                "https://cloud.seatable.io/dtable-server/api/v1/rows/",
+                headers={
+                    "Authorization": f"Token {SEATABLE_USERS_TOKEN}"
+                },
+                params={"table_name": "users.csv"}
+            )
+            if users_response.status_code != 200:
+                flash("Error fetching users from SeaTable.", "error")
+                return redirect(url_for('register_user'))
+
+            users = pd.DataFrame(users_response.json().get("rows", []))
+            if not users.empty and username in users["Username"].values:
+                flash("Username already exists!", "error")
+                return redirect(url_for('register_user'))
+
+            # Hash password and prepare new user entry
+            hashed_password = generate_password_hash(password)
+            new_user = {
+                "Username": username,
+                "Password": hashed_password
+            }
+
+            # Add new user to SeaTable
+            add_user_response = requests.post(
+                "https://cloud.seatable.io/dtable-server/api/v1/rows/",
+                headers={
+                    "Authorization": f"Token {SEATABLE_USERS_TOKEN}",
+                    "Content-Type": "application/json"
+                },
+                json={"table_name": "users.csv", "row": new_user}
+            )
+            if add_user_response.status_code != 201:
+                flash("Error adding user to SeaTable.", "error")
+                return redirect(url_for('register_user'))
+
+            flash("User registered successfully!", "success")
+            return redirect(url_for('login_user'))
+
+        except Exception as e:
+            # Log the exception for debugging
+            print(f"Error in registration: {e}")
+            flash("An unexpected error occurred.", "error")
             return redirect(url_for('register_user'))
-
-        users_data = fetch_table_data(USERS_BASE_URL, USERS_TOKEN)
-
-        if any(user['Username'] == username for user in users_data['rows']):
-            flash("Username already exists!", "error")
-            return redirect(url_for('register_user'))
-
-        # Hash the password before storing
-        hashed_password = generate_password_hash(password)
-
-        # Add new user to SeaTable
-        new_user = {"Username": username, "Password": hashed_password}
-        update_table_data(USERS_BASE_URL, USERS_TOKEN, {"rows": [new_user]})
-
-        flash("User registered successfully!", "success")
-        return redirect(url_for('login_user'))
 
     return render_template('register.html')
-
+@app.errorhandler(Exception)
+def handle_exception(e):
+    return f"An error occurred: {str(e)}", 500
 @app.route('/login', methods=["GET", "POST"])
 def login_user():
     if request.method == "POST":
