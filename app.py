@@ -1,34 +1,32 @@
 from flask import Flask, render_template, request, redirect, url_for, flash, g
 import os
 import pandas as pd
-import requests
 from datetime import datetime
 from werkzeug.security import generate_password_hash, check_password_hash
-from io import BytesIO
+from dotenv import load_dotenv  # Import dotenv to load environment variables
+import requests  # Used to make API requests
+
+# Load environment variables from the .env file
+load_dotenv()
+
+# Get the API access tokens from the environment
+USERS_API_ACCESS_TOKEN = os.getenv("USERS_API_ACCESS_TOKEN")
+EXPENSES_API_ACCESS_TOKEN = os.getenv("EXPENSES_API_ACCESS_TOKEN")
 
 # Initialize Flask app
 app = Flask(__name__)
 app.secret_key = os.urandom(24)
 
-# Define file paths
-USERS_FILE = "users.csv"
-EXPENSES_FILE = "expenses.xlsx"
-
-# Function to download files from GitHub
-def download_file(url, file_name):
-    response = requests.get(url)
-    if response.status_code == 200:
-        with open(file_name, 'wb') as f:
-            f.write(response.content)
-    else:
-        print(f"Error downloading file from {url}")
-
 # File initialization logic
+USERS_FILE = "https://github.com/Mathan3006/webapp/blob/main/users.csv"
+EXPENSES_FILE = "https://github.com/Mathan3006/webapp/blob/main/expenses.xlsx"
+
 def initialize_files():
     if not os.path.exists(USERS_FILE):
-        download_file("https://github.com/Mathan3006/webapp/users.csv", USERS_FILE)
+        pd.DataFrame(columns=["Username", "Password"]).to_csv(USERS_FILE, index=False)
+
     if not os.path.exists(EXPENSES_FILE):
-        download_file("https://github.com/Mathan3006/webapp/expenses.xlsx", EXPENSES_FILE)
+        pd.DataFrame(columns=["Date", "Username", "Expense", "Reason", "Income"]).to_excel(EXPENSES_FILE, index=False, engine="openpyxl")
 
 initialize_files()
 
@@ -161,6 +159,29 @@ def delete_expense(expense_id):
 def logout():
     flash("You have logged out.", "info")
     return redirect(url_for('login_user'))
+
+# API request example with different access tokens
+def make_api_request(url, token):
+    headers = {
+        "Authorization": f"Bearer {token}"
+    }
+    response = requests.get(url, headers=headers)
+    if response.status_code == 200:
+        return response.json()  # Return the JSON data
+    else:
+        return f"Error: {response.status_code}"
+
+@app.route('/fetch_users_data')
+def fetch_users_data():
+    url = "https://api.example.com/users"  # Replace with your actual URL for users
+    data = make_api_request(url, USERS_API_ACCESS_TOKEN)
+    return f"Users API Data: {data}"
+
+@app.route('/fetch_expenses_data')
+def fetch_expenses_data():
+    url = "https://api.example.com/expenses"  # Replace with your actual URL for expenses
+    data = make_api_request(url, EXPENSES_API_ACCESS_TOKEN)
+    return f"Expenses API Data: {data}"
 
 # Run the app
 if __name__ == '__main__':
