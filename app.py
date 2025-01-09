@@ -1,23 +1,34 @@
 from flask import Flask, render_template, request, redirect, url_for, flash, g
 import os
 import pandas as pd
+import requests
 from datetime import datetime
-from werkzeug.security import generate_password_hash, check_password_hash  # Import password hashing functions
+from werkzeug.security import generate_password_hash, check_password_hash
+from io import BytesIO
 
 # Initialize Flask app
 app = Flask(__name__)
 app.secret_key = os.urandom(24)
 
-# File initialization logic
-USERS_FILE = "https://github.com/Mathan3006/webapp/blob/main/users.csv"
-EXPENSES_FILE = "https://github.com/Mathan3006/webapp/blob/main/expenses.xlsx"
+# Define file paths
+USERS_FILE = "users.csv"
+EXPENSES_FILE = "expenses.xlsx"
 
+# Function to download files from GitHub
+def download_file(url, file_name):
+    response = requests.get(url)
+    if response.status_code == 200:
+        with open(file_name, 'wb') as f:
+            f.write(response.content)
+    else:
+        print(f"Error downloading file from {url}")
+
+# File initialization logic
 def initialize_files():
     if not os.path.exists(USERS_FILE):
-        pd.DataFrame(columns=["Username", "Password"]).to_csv(USERS_FILE, index=False)
-
+        download_file("https://github.com/Mathan3006/webapp/users.csv", USERS_FILE)
     if not os.path.exists(EXPENSES_FILE):
-        pd.DataFrame(columns=["Date", "Username", "Expense", "Reason", "Income"]).to_excel(EXPENSES_FILE, index=False, engine="openpyxl")
+        download_file("https://github.com/Mathan3006/webapp/expenses.xlsx", EXPENSES_FILE)
 
 initialize_files()
 
